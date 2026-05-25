@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local English Tutor</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f0f4f8; }
+    .container { max-width: 720px; margin: 0 auto; padding: 20px; }
+    h1 { text-align: center; }
+    .chat { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+    .message { margin-bottom: 14px; }
+    .user { text-align: right; }
+    .assistant { text-align: left; }
+    .bubble { display: inline-block; padding: 12px 16px; border-radius: 18px; max-width: 80%; }
+    .user .bubble { background: #007AFF; color: #fff; }
+    .assistant .bubble { background: #e5e5ea; color: #000; }
+    .grammar { margin-top: 6px; font-size: 0.9rem; color: #d32f2f; }
+    .form { display: flex; gap: 10px; margin-top: 16px; }
+    input { flex: 1; padding: 12px 14px; border-radius: 999px; border: 1px solid #ced4da; }
+    button { padding: 12px 20px; border: none; border-radius: 999px; background: #007AFF; color: #fff; cursor: pointer; }
+    button:disabled { background: #a0cfff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Local English Tutor</h1>
+    <div class="chat" id="chat"></div>
+    <div class="form">
+      <input id="input" placeholder="Type your English message..." autocomplete="off" />
+      <button id="send">Send</button>
+    </div>
+  </div>
+  <script>
+    const chatEl = document.getElementById('chat');
+    const inputEl = document.getElementById('input');
+    const sendEl = document.getElementById('send');
+
+    function addMessage(role, text, grammar = '') {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'message ' + role;
+      const bubble = document.createElement('div');
+      bubble.className = 'bubble';
+      bubble.textContent = text;
+      wrapper.appendChild(bubble);
+      if (grammar) {
+        const grammarEl = document.createElement('div');
+        grammarEl.className = 'grammar';
+        grammarEl.textContent = grammar;
+        wrapper.appendChild(grammarEl);
+      }
+      chatEl.appendChild(wrapper);
+      window.scrollTo(0, document.body.scrollHeight);
+    }
+
+    async function send() {
+      const text = inputEl.value.trim();
+      if (!text) return;
+      addMessage('user', text);
+      inputEl.value = '';
+      sendEl.disabled = true;
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const data = await res.json();
+      if (data.grammar) {
+        addMessage('assistant', '文法解説: ' + data.grammar);
+      }
+      addMessage('assistant', data.response);
+      sendEl.disabled = false;
+      inputEl.focus();
+    }
+
+    sendEl.addEventListener('click', send);
+    inputEl.addEventListener('keypress', e => { if (e.key === 'Enter') send(); });
+  </script>
+</body>
+</html>
