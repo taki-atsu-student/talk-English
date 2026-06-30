@@ -3,78 +3,368 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Local English Tutor</title>
+  <title>Talk English Tutor - Advanced Edition</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f0f4f8; }
-    .container { max-width: 720px; margin: 0 auto; padding: 20px; }
-    h1 { text-align: center; }
-    .chat { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
-    .message { margin-bottom: 14px; }
-    .user { text-align: right; }
-    .assistant { text-align: left; }
-    .bubble { display: inline-block; padding: 12px 16px; border-radius: 18px; max-width: 80%; }
-    .user .bubble { background: #007AFF; color: #fff; }
-    .assistant .bubble { background: #e5e5ea; color: #000; }
-    .grammar { margin-top: 6px; font-size: 0.9rem; color: #d32f2f; }
-    .form { display: flex; gap: 10px; margin-top: 16px; }
-    input { flex: 1; padding: 12px 14px; border-radius: 999px; border: 1px solid #ced4da; }
-    button { padding: 12px 20px; border: none; border-radius: 999px; background: #007AFF; color: #fff; cursor: pointer; }
-    button:disabled { background: #a0cfff; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #333;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    
+    .container {
+      max-width: 700px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      overflow: hidden;
+    }
+    
+    .header {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      text-align: center;
+    }
+    
+    .header h1 {
+      font-size: 1.8rem;
+      margin-bottom: 5px;
+    }
+    
+    .header p {
+      font-size: 0.9rem;
+      opacity: 0.9;
+    }
+    
+    .controls {
+      display: flex;
+      gap: 10px;
+      padding: 15px 20px;
+      background: #f8f9fa;
+      border-bottom: 1px solid #e9ecef;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    
+    .controls label {
+      font-weight: 600;
+      color: #495057;
+      margin-right: 8px;
+    }
+    
+    .level-select {
+      padding: 6px 12px;
+      border: 2px solid #667eea;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    
+    .level-select:hover {
+      background: #667eea;
+      color: white;
+    }
+    
+    .chat-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    
+    .message-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 85%;
+    }
+    
+    .user {
+      align-self: flex-end;
+    }
+    
+    .assistant {
+      align-self: flex-start;
+    }
+    
+    .bubble {
+      padding: 12px 16px;
+      border-radius: 18px;
+      font-size: 0.95rem;
+      line-height: 1.5;
+      word-wrap: break-word;
+      animation: slideIn 0.3s ease-out;
+    }
+    
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .user .bubble {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      border-bottom-right-radius: 4px;
+    }
+    
+    .assistant .bubble {
+      background: #e9ecef;
+      color: #212529;
+      border-bottom-left-radius: 4px;
+    }
+    
+    /* 文法チェック & 詳細情報 */
+    .feedback-box {
+      margin-top: 6px;
+      font-size: 0.85rem;
+      border-left: 3px solid;
+      padding: 8px 12px;
+      border-radius: 4px;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+    
+    .grammar-box {
+      color: #dc3545;
+      background: #fff5f5;
+      border-left-color: #dc3545;
+    }
+    
+    .slang-box {
+      color: #0066cc;
+      background: #e7f3ff;
+      border-left-color: #0066cc;
+    }
+    
+    .naturalness-score {
+      display: inline-block;
+      background: #e7f3ff;
+      color: #0066cc;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+    
+    .form {
+      display: flex;
+      gap: 10px;
+      padding: 15px 20px;
+      background: #f8f9fa;
+      border-top: 1px solid #e9ecef;
+    }
+    
+    input {
+      flex: 1;
+      padding: 12px 16px;
+      border: 2px solid #e9ecef;
+      outline: none;
+      font-size: 0.95rem;
+      border-radius: 8px;
+      transition: border 0.3s;
+    }
+    
+    input:focus {
+      border-color: #667eea;
+    }
+    
+    button {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s, box-shadow 0.2s;
+    }
+    
+    button:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+    }
+    
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    
+    .loading {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #667eea;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Local English Tutor</h1>
-    <div class="chat" id="chat"></div>
+    <div class="header">
+      <h1>🇬🇧 Talk English Tutor</h1>
+      <p>Advanced AI-powered English learning with Japanese explanations</p>
+    </div>
+    
+    <div class="controls">
+      <label for="level">📚 Learning Level:</label>
+      <select id="level" class="level-select">
+        <option value="beginner">Beginner</option>
+        <option value="intermediate" selected>Intermediate</option>
+        <option value="advanced">Advanced</option>
+      </select>
+    </div>
+    
+    <div class="chat-container" id="chat"></div>
+    
     <div class="form">
-      <input id="input" placeholder="Type your English message..." autocomplete="off" />
+      <input
+        id="input"
+        placeholder="英語で話しかけてね！ (例: I wanna learn English)"
+        autocomplete="off"
+      />
       <button id="send">Send</button>
     </div>
   </div>
+
   <script>
     const chatEl = document.getElementById('chat');
     const inputEl = document.getElementById('input');
     const sendEl = document.getElementById('send');
+    const levelEl = document.getElementById('level');
+    
+    let currentLevel = 'intermediate';
 
-    function addMessage(role, text, grammar = '') {
-      const wrapper = document.createElement('div');
-      wrapper.className = 'message ' + role;
+    function addMessage(role, text, feedbacks = {}) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = `message ${role}`;
+      
       const bubble = document.createElement('div');
       bubble.className = 'bubble';
       bubble.textContent = text;
-      wrapper.appendChild(bubble);
-      if (grammar) {
-        const grammarEl = document.createElement('div');
-        grammarEl.className = 'grammar';
-        grammarEl.textContent = grammar;
-        wrapper.appendChild(grammarEl);
+      msgDiv.appendChild(bubble);
+      
+      // 文法チェック表示
+      if (feedbacks.grammar_check) {
+        const grammarDiv = document.createElement('div');
+        grammarDiv.className = 'feedback-box grammar-box';
+        grammarDiv.textContent = feedbacks.grammar_check;
+        msgDiv.appendChild(grammarDiv);
       }
-      chatEl.appendChild(wrapper);
-      window.scrollTo(0, document.body.scrollHeight);
+      
+      // スラング情報表示
+      if (feedbacks.slang_notes) {
+        const slangDiv = document.createElement('div');
+        slangDiv.className = 'feedback-box slang-box';
+        slangDiv.textContent = feedbacks.slang_notes;
+        msgDiv.appendChild(slangDiv);
+      }
+      
+      // 自然性スコア表示
+      if (feedbacks.naturalness_score && feedbacks.naturalness_score > 0) {
+        const scoreDiv = document.createElement('div');
+        scoreDiv.className = 'naturalness-score';
+        scoreDiv.textContent = `自然性: ${feedbacks.naturalness_score}/10`;
+        msgDiv.appendChild(scoreDiv);
+      }
+      
+      chatEl.appendChild(msgDiv);
+      chatEl.scrollTop = chatEl.scrollHeight;
     }
 
     async function send() {
       const text = inputEl.value.trim();
       if (!text) return;
+      
       addMessage('user', text);
       inputEl.value = '';
       sendEl.disabled = true;
-      const res = await fetch('/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
-      });
-      const data = await res.json();
-      if (data.grammar) {
-        addMessage('assistant', '文法解説: ' + data.grammar);
+      inputEl.disabled = true;
+      
+      try {
+        const apiUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? '/chat'
+          : 'https://YOUR_HUGGINGFACE_SPACE_URL/chat';
+        
+        const res = await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: text,
+            user_level: currentLevel
+          }),
+        });
+        
+        if (!res.ok) {
+          throw new Error(`API error: ${res.status}`);
+        }
+        
+        const data = await res.json();
+        
+        addMessage('assistant', data.response, {
+          grammar_check: data.grammar_check,
+          slang_notes: data.slang_notes,
+          naturalness_score: data.naturalness_score
+        });
+      } catch (e) {
+        console.error('Error:', e);
+        addMessage('assistant', '申し訳ありません。通信エラーが発生しました。再度お試しください。');
+      } finally {
+        sendEl.disabled = false;
+        inputEl.disabled = false;
+        inputEl.focus();
       }
-      addMessage('assistant', data.response);
-      sendEl.disabled = false;
-      inputEl.focus();
     }
 
+    // イベントリスナー
     sendEl.addEventListener('click', send);
-    inputEl.addEventListener('keypress', e => { if (e.key === 'Enter') send(); });
+    inputEl.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter' && !sendEl.disabled) send();
+    });
+    
+    levelEl.addEventListener('change', async (e) => {
+      currentLevel = e.target.value;
+      
+      // バックエンドにレベル設定を通知
+      try {
+        await fetch('/set-level?level=' + currentLevel, { method: 'POST' });
+      } catch (err) {
+        console.warn('Level update failed:', err);
+      }
+    });
+    
+    // 初期化
+    console.log('✅ Talk English Tutor loaded!');
   </script>
 </body>
 </html>
