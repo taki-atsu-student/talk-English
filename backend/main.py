@@ -1,510 +1,361 @@
 """
-Talk English Tutor - FastAPI Backend v2.1
-Enhanced Conversational Flow & Context Awareness
+Talk English Tutor - FastAPI Backend v3.1
+Enhanced with translation, grammar feedback, and error handling
 
-改善点：
-- 会話履歴を最大限活用（10往復まで）
-- トピック・文脈追跡
-- ビームサーチで多様な応答
-- 動的パラメータ調整
-- システムプロンプト最適化
-- 会話の自然さと一貫性を重視
+Features:
+- Groq API (llama-3.1-8b-instant)
+- Caching, session management
+- Google Translate integration
+- Grammar checking with gentle feedback
+- Error handling with automatic retry
+- Dark mode support
 """
 
-from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from transformers import AutoModelForCausalLM, AutoTokenizer
-import language_tool_python
-import logging
 import os
+import logging
+import time
+import hashlib
+import re
+import asyncio
 from typing import Optional, List
+from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
+import httpx
 
-# ロギング設定
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# Logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-app = FastAPI(
-    title="Talk English Tutor API",
-    version="2.1.0",
-    description="Enhanced conversational AI with natural dialogue flow"
-)
+load_dotenv()
+app = FastAPI(title="Talk English Tutor API v3.1", version="3.1.0")
 
-# CORS設定
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
+                   allow_methods=["*"], allow_headers=["*"])
 
-BASE_DIR = Path(__file__).resolve().parent
+# =====================================================================
+# SETTINGS
+# =====================================================================
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+MAX_TOKENS = 150
+REQUEST_TIMEOUT = 0.9
+CACHE_TTL = 3600
+MAX_HISTORY = 20
+MAX_RETRIES = 3
+RETRY_DELAY = 0.5
 
-# ============= モデル設定 =============
-MODEL_NAME = os.getenv("MODEL_NAME", "microsoft/DialoGPT-large")
-tokenizer = None
-model = None
-tool = None
+if not GROQ_API_KEY:
+    logger.error("⚠️ GROQ_API_KEY not set")
 
-# ============= グローバル会話管理 =============
-class ConversationContext:
-    """会話コンテキストを管理するクラス"""
-    def __init__(self):
-        self.messages: List[dict] = []
-        self.topics: List[str] = []
-        self.last_ai_response: str = ""
-        self.user_level: str = "intermediate"
-        self.conversation_turn: int = 0
-    
-    def add_message(self, role: str, text: str):
-        """メッセージを追加"""
-        self.messages.append({"role": role, "text": text})
-        if len(self.messages) > 20:
-            self.messages = self.messages[-20:]
-    
-    def extract_topics(self, text: str):
-        """トピックを抽出"""
-        keywords = ['like', 'want', 'think', 'learn', 'about', 'going', 'help']
-        found = [kw for kw in keywords if kw.lower() in text.lower()]
-        if found:
-            self.topics.extend(found)
-            self.topics = self.topics[-5:]
-    
-    def get_context_string(self, max_messages: int = 10) -> str:
-        """コンテキスト文字列を生成"""
-        recent = self.messages[-max_messages:]
-        lines = []
-        for msg in recent:
-            role = "User" if msg["role"] == "user" else "Tutor"
-            lines.append(f"{role}: {msg['text']}")
-        return "\n".join(lines)
-    
-    def reset(self):
-        self.messages = []
-        self.topics = []
-        self.conversation_turn = 0
-
-conversation = ConversationContext()
-
-# ============= 改善されたシステムプロンプト =============
-ADVANCED_SYSTEM_PROMPT = """You are a friendly English conversation partner and tutor. Your key responsibilities:
-
-1. NATURAL DIALOGUE: Keep conversations flowing naturally. Ask follow-up questions. Show genuine interest.
-   - Use contractions: "I'm", "don't", "it's", "you're"
-   - Use conversational patterns: "Well...", "You know...", "Actually...", "I mean..."
-   - Vary sentence structure
-
-2. BUILD ON CONTEXT: Reference previous points. Create continuity between exchanges.
-   - "That's similar to what you mentioned earlier..."
-   - "Oh right, like when you said..."
-   - Connect ideas together
-
-3. RESPOND AUTHENTICALLY: React first, then add thoughts:
-   - Show you understood: "Oh, so you're saying..."
-   - Express reactions: "That's cool!", "I totally get that"
-   - Ask natural follow-ups
-
-4. RESPONSE PATTERN (2-3 sentences):
-   - 1st: React/acknowledge what they said
-   - 2nd: Add related information or your perspective  
-   - 3rd: Ask a follow-up question
-
-Good example:
-User: "I'm learning Python"
-You: "Oh nice! Python's really fun to learn. I use it all the time for different stuff, you know? What kind of projects are you working on?"
-
-Bad example:
-User: "I'm learning Python"
-You: "Python is a programming language. It is used for many purposes. What is your purpose?"
-
-Always prioritize NATURAL, FLOWING CONVERSATION."""
-
-def load_models():
-    """モデルを遅延読み込み"""
-    global tokenizer, model, tool
-    try:
-        if tokenizer is None:
-            logger.info(f"Loading tokenizer from {MODEL_NAME}...")
-            tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-            if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token
-        
-        if model is None:
-            logger.info(f"Loading model {MODEL_NAME}...")
-            model = AutoModelForCausalLM.from_pretrained(MODEL_NAME)
-        
-        if tool is None:
-            logger.info("Initializing grammar tool...")
-            tool = language_tool_python.LanguageTool('en-US')
-        
-        logger.info("✅ All models loaded successfully")
-    except Exception as e:
-        logger.error(f"Failed to load models: {e}")
-        raise
-
-
-@app.on_event("startup")
-async def startup_event():
-    """アプリ起動時にモデルを読み込む"""
-    try:
-        load_models()
-    except Exception as e:
-        logger.error(f"Startup warning: {e}")
-
-
-# ============= リクエスト/レスポンスモデル =============
+# =====================================================================
+# DATA MODELS
+# =====================================================================
 class ChatRequest(BaseModel):
     text: str
-    user_level: Optional[str] = "intermediate"
-
+    session_id: Optional[str] = None
 
 class ChatResponse(BaseModel):
     response: str
-    grammar_check: str = ""
-    corrections: list = []
-    slang_notes: str = ""
-    naturalness_score: int = 0
+    session_id: str
+    timestamp: str
+    feedback: Optional[str] = None
 
+class TranslateRequest(BaseModel):
+    text: str
 
-# ============= API エンドポイント =============
-@app.get("/", response_class=HTMLResponse)
-async def root():
-    """Serve main HTML interface"""
+class TranslateResponse(BaseModel):
+    translation: str
+
+class ResetRequest(BaseModel):
+    session_id: Optional[str] = None
+
+class CacheEntry:
+    def __init__(self, response: str, feedback: Optional[str], timestamp: float):
+        self.response = response
+        self.feedback = feedback
+        self.timestamp = timestamp
+    
+    def is_expired(self) -> bool:
+        return time.time() - self.timestamp > CACHE_TTL
+
+# =====================================================================
+# CACHE
+# =====================================================================
+class ResponseCache:
+    def __init__(self):
+        self.cache = {}
+    
+    def _get_key(self, text: str) -> str:
+        return hashlib.md5(text.lower().strip().encode()).hexdigest()
+    
+    def get(self, text: str) -> tuple:
+        key = self._get_key(text)
+        if key in self.cache:
+            entry = self.cache[key]
+            if not entry.is_expired():
+                logger.info(f"✓ Cache hit: {text[:30]}...")
+                return entry.response, entry.feedback
+            else:
+                del self.cache[key]
+        return None, None
+    
+    def set(self, text: str, response: str, feedback: Optional[str] = None) -> None:
+        key = self._get_key(text)
+        self.cache[key] = CacheEntry(response, feedback, time.time())
+
+cache = ResponseCache()
+
+# =====================================================================
+# SESSION
+# =====================================================================
+class ConversationSession:
+    def __init__(self, session_id: str):
+        self.session_id = session_id
+        self.history = []
+        self.created_at = datetime.now()
+        self.last_accessed = datetime.now()
+    
+    def add_message(self, role: str, content: str) -> None:
+        self.history.append({"role": role, "content": content})
+        if len(self.history) > MAX_HISTORY * 2:
+            self.history = self.history[-MAX_HISTORY*2:]
+        self.last_accessed = datetime.now()
+    
+    def get_history(self) -> List[dict]:
+        return self.history[-20:]
+    
+    def is_expired(self, ttl: int = 3600) -> bool:
+        return (datetime.now() - self.last_accessed).seconds > ttl
+
+sessions = {}
+
+def get_or_create_session(session_id: Optional[str] = None) -> ConversationSession:
+    if session_id and session_id in sessions:
+        return sessions[session_id]
+    new_id = hashlib.md5(f"{time.time()}".encode()).hexdigest()
+    session = ConversationSession(new_id)
+    sessions[new_id] = session
+    return session
+
+def cleanup_expired_sessions() -> None:
+    expired = [sid for sid, s in sessions.items() if s.is_expired()]
+    for sid in expired:
+        del sessions[sid]
+    if expired:
+        logger.info(f"Cleaned up {len(expired)} sessions")
+
+# =====================================================================
+# GROQ API
+# =====================================================================
+async def call_groq_api(user_message: str, history: List[dict]) -> Optional[str]:
+    system_prompt = """You are a friendly English conversation partner. 
+Keep responses concise (1-2 sentences). Be natural and encouraging.
+Understand slang: wanna, gonna, lol, omg, btw, etc."""
+    
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.extend(history)
+    messages.append({"role": "user", "content": user_message})
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=REQUEST_TIMEOUT) as client:
+                response = await client.post(
+                    GROQ_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {GROQ_API_KEY}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": GROQ_MODEL,
+                        "messages": messages,
+                        "max_tokens": MAX_TOKENS,
+                        "temperature": 0.7,
+                        "top_p": 0.9
+                    }
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "choices" in data and len(data["choices"]) > 0:
+                        return data["choices"][0]["message"]["content"].strip()
+                else:
+                    logger.error(f"API error: {response.status_code}")
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout (attempt {attempt + 1}/{MAX_RETRIES})")
+        except Exception as e:
+            logger.error(f"API error: {str(e)}")
+        
+        if attempt < MAX_RETRIES - 1:
+            await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+    
+    return None
+
+# =====================================================================
+# GRAMMAR CHECK & FEEDBACK
+# =====================================================================
+def check_grammar_gentle(text: str) -> Optional[str]:
+    """Check grammar and provide gentle feedback"""
+    issues = []
+    normalized = text.strip()
+
+    # Check 1: "is" instead of "are"
+    if re.search(r'\b(you|we|they|these|those)\s+is\b', normalized, re.IGNORECASE):
+        issues.append("💡 Tip: 'you/we/they' usually use 'are' instead of 'is'.")
+
+    # Check 2: Missing subject
+    if re.search(r'^(going|learning|studying|working)\s+', normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Try adding a subject like 'I'm' or 'We're' at the start.")
+
+    # Check 3: Missing article
+    if re.search(r'\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem)\b', normalized, re.IGNORECASE) is None and re.search(r'\b(interesting|idea|thing|problem)\b', normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Use 'a' or 'the' before nouns: 'an interesting idea' or 'the problem'.")
+
+    # Check 4: Double negation
+    if re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Avoid double negatives—use either 'no' or 'don't', not both.")
+
+    # Check 5: Common mistakes
+    mistakes = {
+        r"\btheir\s+are\b": "'their are' → use 'there are'.",
+        r"\byour\s+wrong\b": "'your wrong' → use 'you're wrong'.",
+        r"\bits\s+me\b": "'its me' → use 'it's me'.",
+        r"\bi\s+is\b": "'I is' is incorrect—use 'I am'.",
+    }
+
+    for pattern, correction in mistakes.items():
+        if re.search(pattern, normalized, re.IGNORECASE):
+            issues.append(f"💡 {correction}")
+
+    return issues[0] if issues else None
+
+def extract_translation_friendly(text: str) -> str:
+    """Extract important phrases for translation"""
+    words = text.split()
+    return ' '.join(words[:15]) if len(words) > 15 else text
+
+# =====================================================================
+# TRANSLATION
+# =====================================================================
+async def translate_text(text: str) -> str:
+    """Translate English to Japanese using Google Translate API or fallback"""
     try:
-        html_path = BASE_DIR / "static" / "index.html"
-        return html_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise HTTPException(status_code=404, detail="index.html not found")
-    except Exception as e:
-        logger.error(f"Error serving root: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        # Use free Google Translate API
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.get(
+                "https://translate.googleapis.com/translate_a/single",
+                params={
+                    "client": "gtx",
+                    "sl": "en",
+                    "tl": "ja",
+                    "dt": "t",
+                    "q": text[:200]
+                }
+            )
+            if response.status_code == 200:
+                try:
+                    result = response.json()
+                    if result and result[0]:
+                        return result[0][0][0]
+                except:
+                    pass
+    except:
+        pass
+    
+    return "(Translation unavailable)"
 
-
+# =====================================================================
+# ENDPOINTS
+# =====================================================================
 @app.post("/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest):
-    """Enhanced chat endpoint with improved conversational flow"""
-    try:
-        if tokenizer is None or model is None:
-            load_models()
-        
-        user_text = request.text.strip()
-        if not user_text:
-            return ChatResponse(response="", grammar_check="")
-        
-        if len(user_text) > 500:
-            return ChatResponse(response="Text too long (max 500 chars)", grammar_check="")
-
-        # コンテキスト更新
-        conversation.user_level = request.user_level or "intermediate"
-        conversation.add_message("user", user_text)
-        conversation.extract_topics(user_text)
-        conversation.conversation_turn += 1
-        
-        # 改善: より長い履歴とトピック情報を含むプロンプト
-        prompt = build_improved_prompt(conversation)
-        
-        # 文法チェック
-        grammar_result = check_grammar_detailed(user_text)
-
-        # 改善: より自然な応答生成
-        response = generate_natural_response(
-            prompt,
-            conversation.user_level,
-            previous_response=conversation.last_ai_response
-        )
-        
-        conversation.add_message("assistant", response)
-        conversation.last_ai_response = response
-
+    user_text = request.text.strip()
+    if not user_text:
+        raise HTTPException(status_code=400, detail="Empty text")
+    
+    session = get_or_create_session(request.session_id)
+    
+    # Check cache
+    cached_response, cached_feedback = cache.get(user_text)
+    if cached_response:
+        session.add_message("user", user_text)
+        session.add_message("assistant", cached_response)
         return ChatResponse(
-            response=response,
-            grammar_check=grammar_result.get("summary", ""),
-            corrections=grammar_result.get("corrections", []),
-            slang_notes=grammar_result.get("slang_notes", ""),
-            naturalness_score=grammar_result.get("naturalness_score", 0)
+            response=cached_response,
+            session_id=session.session_id,
+            timestamp=datetime.now().isoformat(),
+            feedback=cached_feedback
         )
     
-    except Exception as e:
-        logger.error(f"Chat error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Chat processing failed: {str(e)}")
+    # Check grammar
+    grammar_feedback = check_grammar_gentle(user_text)
+    
+    # Get AI response
+    history = session.get_history()
+    assistant_response = await call_groq_api(user_text, history)
+    
+    if not assistant_response:
+        assistant_response = "I'm sorry, I didn't understand. Could you rephrase that?"
+    
+    session.add_message("user", user_text)
+    session.add_message("assistant", assistant_response)
+    cache.set(user_text, assistant_response, grammar_feedback)
+    cleanup_expired_sessions()
+    
+    return ChatResponse(
+        response=assistant_response,
+        session_id=session.session_id,
+        timestamp=datetime.now().isoformat(),
+        feedback=grammar_feedback
+    )
 
+@app.post("/translate", response_model=TranslateResponse)
+async def translate(request: TranslateRequest):
+    """Translate selected text to Japanese"""
+    if not request.text or len(request.text) > 300:
+        raise HTTPException(status_code=400, detail="Invalid text")
+    
+    translation = await translate_text(request.text)
+    return TranslateResponse(translation=translation)
+
+@app.post("/reset")
+async def reset_session(request: ResetRequest):
+    if request.session_id and request.session_id in sessions:
+        del sessions[request.session_id]
+    return {"status": "success"}
+
+@app.get("/")
+async def root():
+    return {
+        "app": "Talk English Tutor v3.1",
+        "status": "running",
+        "features": ["Chat", "Translation", "Grammar Feedback", "Dark Mode", "Error Retry"]
+    }
 
 @app.get("/health")
 async def health():
-    """Health check endpoint"""
     return {
         "status": "healthy",
-        "version": "2.1.0",
-        "models_loaded": tokenizer is not None and model is not None,
-        "grammar_tool_ready": tool is not None,
-        "conversation_turn": conversation.conversation_turn,
-        "model_name": MODEL_NAME
+        "api": "configured" if GROQ_API_KEY else "missing",
+        "sessions": len(sessions),
+        "cache": len(cache.cache)
     }
 
+# =====================================================================
+# STATIC FILES
+# =====================================================================
+static_dir = Path(__file__).parent / "static"
+if static_dir.exists():
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-@app.post("/reset")
-async def reset_conversation():
-    """会話をリセット"""
-    conversation.reset()
-    return {"status": "reset", "message": "Conversation context cleared"}
-
-
-@app.get("/static/{path:path}")
-async def static(path: str):
-    """Serve static files"""
-    try:
-        file_path = BASE_DIR / "static" / path
-        if not file_path.resolve().is_relative_to(BASE_DIR / "static"):
-            raise HTTPException(status_code=403, detail="Access denied")
-        
-        if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File not found: {path}")
-        
-        return HTMLResponse(file_path.read_text(encoding="utf-8"))
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error serving static file {path}: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-# ============= 改善されたプロンプト構築 =============
-def build_improved_prompt(context: ConversationContext) -> str:
-    """改善されたプロンプト構築"""
-    lines = [
-        ADVANCED_SYSTEM_PROMPT,
-        "\n" + "="*50,
-        "CONVERSATION HISTORY:",
-        "="*50,
-        ""
-    ]
-    
-    # 過去10メッセージを含める
-    history = context.get_context_string(max_messages=10)
-    lines.append(history)
-    
-    # 現在のトピック情報
-    if context.topics:
-        lines.append(f"\n[Topics: {', '.join(set(context.topics))}]")
-    
-    # ユーザーレベルに応じた指示
-    if context.user_level == "beginner":
-        lines.append("[Use simple, clear English. Explain any difficult words.]")
-    elif context.user_level == "advanced":
-        lines.append("[Feel free to use idioms, slang, complex expressions.]")
-    
-    lines.append("\nContinue the conversation naturally:")
-    
-    return "\n".join(lines)
-
-
-# ============= 改善されたレスポンス生成 =============
-def generate_natural_response(
-    prompt: str,
-    user_level: str = "intermediate",
-    previous_response: str = ""
-) -> str:
-    """より自然な応答を生成"""
-    if not tokenizer or not model:
-        return "I'm sorry, I'm not ready to chat yet. Please try again in a moment."
-    
-    try:
-        # ユーザーレベルに応じたパラメータ
-        params = {
-            "beginner": {
-                "max_new_tokens": 60,
-                "num_beams": 3,
-                "temperature": 0.9,
-                "top_p": 0.85,
-            },
-            "intermediate": {
-                "max_new_tokens": 80,
-                "num_beams": 4,
-                "temperature": 0.95,
-                "top_p": 0.88,
-            },
-            "advanced": {
-                "max_new_tokens": 100,
-                "num_beams": 5,
-                "temperature": 1.0,
-                "top_p": 0.9,
-            }
-        }
-        
-        p = params.get(user_level, params["intermediate"])
-        
-        inputs = tokenizer(
-            prompt,
-            return_tensors="pt",
-            truncation=True,
-            max_length=1024
-        )
-        
-        # ビームサーチで多様な応答を生成
-        outputs = model.generate(
-            **inputs,
-            max_new_tokens=p["max_new_tokens"],
-            num_beams=p["num_beams"],
-            early_stopping=True,
-            pad_token_id=tokenizer.eos_token_id,
-            do_sample=True,
-            temperature=p["temperature"],
-            top_p=p["top_p"],
-            repetition_penalty=1.2,
-            no_repeat_ngram_size=2,
-            length_penalty=0.8,  # 適度な長さを促す
-        )
-        
-        response = tokenizer.decode(
-            outputs[0][inputs.input_ids.shape[-1]:],
-            skip_special_tokens=True
-        ).strip()
-        
-        # クリーンアップ
-        if "User:" in response:
-            response = response.split("User:")[0].strip()
-        if response.lower().startswith("ai") or response.lower().startswith("tutor"):
-            response = response[2:].strip()
-        
-        # 最小長チェック
-        if len(response) < 8:
-            response = "I like that! Tell me more about it."
-        
-        return response
-    
-    except Exception as e:
-        logger.error(f"Response generation failed: {e}", exc_info=True)
-        return "I had trouble generating a response. Could you try rephrasing that?"
-
-
-# ============= 文法チェック & スラング検出 =============
-def check_grammar_detailed(text: str) -> dict:
-    """文法チェック"""
-    if not tool:
-        return {
-            "summary": "",
-            "corrections": [],
-            "slang_notes": "",
-            "naturalness_score": 0
-        }
-    
-    try:
-        matches = tool.check(text)
-        corrections = []
-        summary_parts = []
-        slang_notes = ""
-        naturalness_score = 10
-        
-        if not matches:
-            return {
-                "summary": "✅ 完璧です！",
-                "corrections": [],
-                "slang_notes": "",
-                "naturalness_score": 10
-            }
-        
-        for i, match in enumerate(matches[:3]):
-            try:
-                error_text = text[match.offset:match.offset + match.errorLength]
-                suggestions = match.replacements[:1] if match.replacements else [""]
-                suggestion = suggestions[0] if suggestions[0] else error_text
-                
-                explanation_ja = generate_grammar_explanation_ja(
-                    error_text, match.message, suggestion
-                )
-                
-                corrections.append({
-                    "error": error_text,
-                    "correction": suggestion,
-                    "explanation_ja": explanation_ja
-                })
-                
-                summary_parts.append(
-                    f"⚠️ 「{error_text}」 → 「{suggestion}\"\n"
-                    f"   💡 {explanation_ja}"
-                )
-                naturalness_score -= 2
-                
-            except (IndexError, AttributeError):
-                continue
-        
-        slang_result = detect_slang_and_informal(text)
-        if slang_result:
-            slang_notes = slang_result
-        
-        summary = "\n".join(summary_parts) if summary_parts else "✅ 完璧です！"
-        
-        return {
-            "summary": summary,
-            "corrections": corrections,
-            "slang_notes": slang_notes,
-            "naturalness_score": max(1, naturalness_score)
-        }
-        
-    except Exception as e:
-        logger.warning(f"Grammar check failed: {e}")
-        return {
-            "summary": "",
-            "corrections": [],
-            "slang_notes": "",
-            "naturalness_score": 0
-        }
-
-
-def generate_grammar_explanation_ja(error: str, message: str, correction: str) -> str:
-    """文法説明"""
-    explanation_map = {
-        "Possible typo": f"綴り間違い",
-        "Agreement": f"主語と時制が一致していません",
-        "Tense": f"時制が不適切です",
-        "Article": f"冠詞の使い方に誤りがあります",
-        "Punctuation": f"句読点の使い方に誤りがあります",
-    }
-    
-    for key, ja_msg in explanation_map.items():
-        if key.lower() in message.lower():
-            return ja_msg
-    
-    return f"「{correction}」の方が正しいです"
-
-
-def detect_slang_and_informal(text: str) -> str:
-    """スラング検出"""
-    slang_dict = {
-        "gonna": "going to",
-        "wanna": "want to",
-        "gotta": "have got to",
-        "kinda": "kind of",
-        "sorta": "sort of",
-    }
-    
-    detected = []
-    text_lower = text.lower()
-    
-    for slang, formal in slang_dict.items():
-        if slang in text_lower:
-            detected.append(f"📝 {slang} = {formal} (カジュアル表現)")
-    
-    return "\n".join(detected) if detected else ""
-
-
-@app.post("/set-level")
-async def set_user_level(level: str):
-    """ユーザーレベル設定"""
-    valid_levels = ["beginner", "intermediate", "advanced"]
-    if level not in valid_levels:
-        raise HTTPException(status_code=400, detail=f"Invalid level")
-    conversation.user_level = level
-    return {"status": "ok", "user_level": conversation.user_level}
-
-
-@app.get("/level")
-async def get_user_level():
-    """ユーザーレベル取得"""
-    return {"user_level": conversation.user_level}
+if __name__ == "__main__":
+    import uvicorn
+    import asyncio
+    port = int(os.getenv("BACKEND_PORT", 8000))
+    logger.info(f"Starting server on port {port}...")
+    uvicorn.run(app, host="0.0.0.0", port=port)

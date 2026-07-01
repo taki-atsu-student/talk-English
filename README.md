@@ -1,56 +1,59 @@
 # talk-English
 
-APIベースの対話型英語学習アプリです。
-このアプリはローカルモデルを直接動かすのではなく、外部またはクラウド上のAI APIに接続して英語学習チャットを提供します。
+Talk English Tutor は、FastAPI と外部 AI API を使った英語学習チャットアプリです。
+このアプリはブラウザ UI と API 連携にフォーカスし、ローカルで大きなモデルを実行しません。
 
 ## 概要
 
-- ユーザーはブラウザから英語のメッセージを送信します。
-- アプリはAIチャットAPIにリクエストを送り、返答と文法フィードバックを受け取ります。
-- ローカルでモデルをダウンロード・実行する必要はありません。
+- ユーザーは `backend/static/index.html` からブラウザで英語メッセージを送信します。
+- バックエンドは Groq API を呼び出し、応答と文法フィードバックを生成します。
+- モバイルでも使いやすい、シンプルなチャット UI を提供します。
 
 ## 使い方
 
-1. `frontend` または `backend/static/index.html` のAPIエンドポイント設定を確認します。
-   - ローカル開発の場合: `/chat`
-   - リモートAPIの場合: `https://YOUR_API_HOST/chat` のような外部URLに変更します。
-2. ブラウザでアプリを開きます。
-   - ローカルでUIを表示する場合は、`backend`を起動して `http://localhost:8000` にアクセスします。
-   - すでにホストされた静的サイトを利用する場合は、任意のURLから開けます。
-3. 英語でメッセージを入力し、AIと対話しながら学習します。
+1. ルートの `.env` に `GROQ_API_KEY` を設定します。
+2. `run_backend.bat` を実行してバックエンドを起動します。
+3. ブラウザで `http://localhost:8000/static/index.html` にアクセスします。
+4. 英語メッセージを入力して AI と会話を始めます。
 
-## 推奨構成
+## API
 
-- 本番環境では、AIの応答を生成する部分をクラウドAPIに移行します。
-- フロントエンドは標準的なWeb UIとして動作し、API通信だけで完結します。
-- これにより、クライアント側に重いモデルを置かず、デバイス依存性を減らせます。
-
-## API接続の例
-
-- `POST /chat` に以下のJSONを送信します。
+- `POST /chat`
   ```json
   { "text": "Hello, I want to practice English." }
   ```
-- レスポンス例:
+- 返却される JSON の例:
   ```json
   {
     "response": "Sure! Let's practice together.",
-    "grammar": "⚠️ ..."
+    "session_id": "...",
+    "timestamp": "2026-07-01T12:00:00",
+    "feedback": "💡 Tip: ..."
   }
   ```
 
-## 既存のローカルバックエンドについて
+- `POST /translate`
+  ```json
+  { "text": "Hello world" }
+  ```
+- `GET /health` でサーバー状態を確認できます。
 
-- このリポジトリには `backend` フォルダ内にローカル実行用のコードが含まれていますが、
-  本READMEではAPIベースの利用を前提としています。
-- 既存コードを利用する場合でも、基本的にはAPIエンドポイント経由で通信します。
+## バックエンド
 
-## 開発時の注意
+- `backend/main.py` : FastAPI API サーバー
+- `backend/requirements.txt` : Python 依存関係
+- `backend/static/index.html` : フロントエンド UI
 
-- ローカルテストで `backend` をそのまま使う場合、`backend/requirements.txt` に記載の依存関係をインストールしてください。
-- ただし、本アプリの目的はローカルモデル実行ではなく、APIを使った英語学習体験の提供です。
+## 特長
 
-## 変更点
+- ダークモード対応
+- 翻訳ボタン
+- リアルタイム入力フィードバック
+- エラー時リトライ
+- 優しい英文法アドバイス
 
-- ローカルモデルのダウンロードや `setup_device.bat` の利用は、本READMEでは主要な利用フローではありません。
-- フロントエンドは `https://YOUR_HUGGINGFACE_SPACE_URL/chat` のような外部APIを目標に構築されています。
+## 注意
+
+- `.env` の `GROQ_API_KEY` を必ず設定してください。
+- `backend/static/index.html` はこのリポジトリの主要なフロントエンドです。
+- 古い `frontend/` や `talk-english-tutor/` は現在の利用フローに含まれません。
