@@ -42,14 +42,10 @@ IF NOT EXIST "%ROOT_DIR%\.env" (
 REM Change into backend and start server in a separate window
 cd /d "%ROOT_DIR%\backend"
 echo Starting backend on http://0.0.0.0:8000 ...
-start "Talk English Backend" /min cmd /k "cd /d "%ROOT_DIR%\backend" && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
-
-echo Backend launched in a new window. This window will remain open.
+start "Talk English Backend" /min cmd /c "cd /d "%ROOT_DIR%\backend" && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 
 echo Opening UI in your browser...
 timeout /t 2 /nobreak >nul
 start "" "http://127.0.0.1:8000/static/index.html"
-
-echo Done. Keep this window open while the server is running.
 
 ENDLOCAL
