@@ -57,3 +57,36 @@ Talk English Tutor は、FastAPI と外部 AI API を使った英語学習チャ
 - `.env` の `GROQ_API_KEY` を必ず設定してください。
 - `backend/static/index.html` はこのリポジトリの主要なフロントエンドです。
 - 古い `frontend/` や `talk-english-tutor/` は現在の利用フローに含まれません。
+
+## ローカルでの実行（Quick Start）
+
+1. ルートに `.env` を作成し、`GROQ_API_KEY` を設定します。
+
+2. 仮想環境がある場合は有効化してください（任意）:
+
+```powershell
+# Windows (PowerShell)
+.\.venv\Scripts\Activate.ps1
+```
+
+3. 依存をインストールします:
+
+```powershell
+python -m pip install -r backend\requirements.txt
+```
+
+4. サーバーを起動します:
+
+```powershell
+.\n+run_backend.bat
+```
+
+5. ブラウザで `http://localhost:8000/static/index.html` を開きます。
+
+6. テストを実行する場合:
+
+```powershell
+python -m pytest backend -q
+```
+
+問題があれば、`backend/main.py` と `backend/static/index.html` を確認してください。
