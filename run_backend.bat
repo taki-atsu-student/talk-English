@@ -42,7 +42,7 @@ IF NOT EXIST "%ROOT_DIR%\.env" (
 REM Change into backend and start server in a hidden process
 cd /d "%ROOT_DIR%\backend"
 echo Starting backend on http://0.0.0.0:8000 ...
-powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%ROOT_DIR%\.venv\Scripts\python.exe' -ArgumentList '-m uvicorn main:app --reload --host 0.0.0.0 --port 8000' -WorkingDirectory '%ROOT_DIR%\backend'"
+powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -FilePath '%ROOT_DIR%\.venv\Scripts\python.exe' -ArgumentList '-m uvicorn main:app --host 0.0.0.0 --port 8000' -WorkingDirectory '%ROOT_DIR%\backend' -WindowStyle Hidden"
 
 echo Opening UI in your browser...
 timeout /t 2 /nobreak >nul
