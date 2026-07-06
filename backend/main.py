@@ -16,7 +16,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi import Request
-from fastapi import Request
 from pydantic import BaseModel
 import os
 import logging
@@ -24,11 +23,18 @@ import time
 import hashlib
 import re
 import asyncio
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 import httpx
+
+try:
+    from transformers import pipeline
+    import torch
+    TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    TRANSFORMERS_AVAILABLE = False
 
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -46,6 +52,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
+LOCAL_MODEL_NAME = os.getenv("LOCAL_MODEL_NAME", "google/flan-t5-small")
+USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "").lower() in ("1", "true")
 MAX_TOKENS = 150
 REQUEST_TIMEOUT = 0.9
 CACHE_TTL = 3600
@@ -54,7 +62,9 @@ MAX_RETRIES = 3
 RETRY_DELAY = 0.5
 
 if not GROQ_API_KEY:
-    logger.error("⚠️ GROQ_API_KEY not set")
+    logger.warning("⚠️ GROQ_API_KEY not set; cloud LLM will be disabled unless local model is used")
+
+local_model_pipeline: Optional[Any] = None
 
 
 def should_use_cloud_llm() -> bool:
@@ -62,19 +72,59 @@ def should_use_cloud_llm() -> bool:
     return bool(os.getenv("USE_CLOUD_LLM", "").lower() in ("1", "true") and GROQ_API_KEY)
 
 
+def should_use_local_model() -> bool:
+    """Return True when a local model should be used."""
+    return USE_LOCAL_MODEL and TRANSFORMERS_AVAILABLE
+
+
 def load_models() -> None:
-    """Compatibility stub for tests: no local model loading in this project."""
-    logger.info("load_models: stub - no local models loaded")
-    return None
+    """Load optional local model for fallback responses."""
+    global local_model_pipeline
+    if should_use_local_model():
+        try:
+            device = 0 if torch.cuda.is_available() else -1
+            logger.info(f"Loading local model: {LOCAL_MODEL_NAME} (device={device})")
+            local_model_pipeline = pipeline(
+                "text2text-generation",
+                model=LOCAL_MODEL_NAME,
+                device=device,
+                framework="pt"
+            )
+            logger.info("Local model loaded successfully.")
+        except Exception as e:
+            logger.warning(f"Failed to load local model: {e}")
+            local_model_pipeline = None
+    elif USE_LOCAL_MODEL:
+        logger.warning("USE_LOCAL_MODEL=1 but transformers/torch is unavailable.")
+    else:
+        logger.info("Local model loading skipped.")
+
+
+def generate_local_response(user_text: str, history: Optional[List[dict]] = None, user_level: Optional[str] = None) -> str:
+    if local_model_pipeline is None:
+        return local_fallback_response(user_text, user_level)
+
+    prompt = f"You are an English tutor. Respond briefly and helpfully. User: {user_text}\nTutor:"
+    try:
+        result = local_model_pipeline(prompt, max_length=128, num_return_sequences=1, do_sample=False)
+        if result and isinstance(result, list):
+            text = result[0].get("generated_text") if isinstance(result[0], dict) else None
+            if text:
+                return text.strip()
+    except Exception as exc:
+        logger.warning(f"Local model generation failed: {exc}")
+
+    return local_fallback_response(user_text, user_level)
 
 
 def generate_natural_response(user_text: str, history: Optional[List[dict]] = None, user_level: Optional[str] = None) -> str:
-    """Synchronous compatibility wrapper that tries cloud API, falls back to polite message.
+    """Synchronous compatibility wrapper that tries cloud LLM, then local model, then fallback."""
+    text = user_text.strip()
+    if not text:
+        return "Please write something so we can chat."
 
-    Tests patch this function, so keep it simple and deterministic.
-    """
-    try:
-        if should_use_cloud_llm() and GROQ_API_KEY:
+    if should_use_cloud_llm() and GROQ_API_KEY:
+        try:
             resp = httpx.post(
                 GROQ_API_URL,
                 headers={
@@ -83,7 +133,7 @@ def generate_natural_response(user_text: str, history: Optional[List[dict]] = No
                 },
                 json={
                     "model": GROQ_MODEL,
-                    "messages": [{"role": "user", "content": user_text}],
+                    "messages": [{"role": "user", "content": text}],
                     "max_tokens": MAX_TOKENS,
                     "temperature": 0.7,
                     "top_p": 0.9,
@@ -94,10 +144,45 @@ def generate_natural_response(user_text: str, history: Optional[List[dict]] = No
                 data = resp.json()
                 if "choices" in data and len(data["choices"]) > 0:
                     return data["choices"][0]["message"]["content"].strip()
-    except Exception:
-        logger.debug("generate_natural_response: cloud call failed or unavailable")
+            else:
+                logger.warning(f"Cloud LLM request failed: {resp.status_code}")
+        except Exception as exc:
+            logger.debug(f"generate_natural_response: cloud call failed or unavailable: {exc}")
 
-    return "I'm sorry, I didn't understand. Could you rephrase that?"
+    if should_use_local_model():
+        return generate_local_response(text, history, user_level)
+
+    return local_fallback_response(text, user_level)
+
+
+def local_fallback_response(text: str, user_level: Optional[str] = None) -> str:
+    """Generate a simple friendly response when cloud LLM is unavailable."""
+    normalized = text.lower().strip()
+    if re.search(r"\bhello\b|\bhi\b|\bhey\b", normalized):
+        return "Hi there! How can I help you practise English today?"
+    if re.search(r"\bhow are you\b|\bhow's it going\b|\bwhat's up\b", normalized):
+        return "I'm doing great, thanks! What would you like to talk about?"
+    if re.search(r"\bwhy\b", normalized):
+        return "Why is a great question. Could you tell me more about what you want to know?"
+    if re.search(r"\bthank\b", normalized):
+        return "You're welcome! I'm happy to help. What else would you like to practise?"
+    if re.search(r"\bdo you\b.*\benglish\b|\bcan you\b.*\benglish\b", normalized):
+        return "Yes, I can help you practise English. What would you like to talk about?"
+    if re.search(r"\bwhat(?:'s| is) your name\b|\byour name\b", normalized):
+        return "I'm Talk English Tutor. Nice to meet you! What's your name?"
+    if re.search(r"\bmy name\b", normalized):
+        return "Nice to meet you! How can I help you practise English today?"
+    if re.search(r"\bi(?:'m| am)\b.*\b(learning|studying|studying English|study English)\b|\bi wanna\b.*\bstudy\b", normalized):
+        return "Great! I can help you study English. What topic or phrase do you want to practise?"
+    if re.search(r"\bhello\b|\bhi\b|\bhey\b", normalized):
+        return "Hello! Let's practise English together. What would you like to say?"
+    if re.search(r"\bhow are you\b|\bhow's it going\b|\bwhat's up\b", normalized):
+        return "I'm fine, thank you! How about you?"
+    if re.search(r"\bwhere\b|\bwhen\b|\bwhat\b|\bwho\b|\bhow\b", normalized) and len(normalized.split()) > 2:
+        return "That's an interesting question. Can you say more about what you want to practise in English?"
+    if len(normalized.split()) <= 2:
+        return "Please tell me more so I can help you better."
+    return "I can help with English practice. Please ask me a question or say something more specific."
 
 # =====================================================================
 # DATA MODELS
@@ -308,7 +393,9 @@ async def translate_text(text: str) -> str:
                 try:
                     result = response.json()
                     if result and result[0]:
-                        return result[0][0][0]
+                        # Google returns segments inside result[0]; join them all
+                        translated_segments = [segment[0] for segment in result[0] if segment and len(segment) > 0]
+                        return "".join(translated_segments).strip()
                 except:
                     pass
     except:
@@ -448,6 +535,10 @@ async def static_protect(file_path: str, request: Request):
     raise HTTPException(status_code=404, detail="Not found")
 if static_dir.exists():
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+@app.on_event("startup")
+def startup_event():
+    load_models()
 
 if __name__ == "__main__":
     import uvicorn
