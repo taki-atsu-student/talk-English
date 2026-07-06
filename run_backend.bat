@@ -39,13 +39,13 @@ IF NOT EXIST "%ROOT_DIR%\.env" (
     )
 )
 
-REM Change into backend and start server in a new cmd window
+REM Change into backend and start server in this window
 cd /d "%ROOT_DIR%\backend"
-echo Opening backend in a new terminal and browser...
-start "Talk English Backend" cmd /k "cd /d "%ROOT_DIR%\backend" && uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+echo Starting backend on http://0.0.0.0:8000 ...
 
-REM Wait a moment for the server to start then open the static UI in the default browser
-timeout /t 2 /nobreak >nul
+REM Open the static UI in the default browser
 start "" "http://127.0.0.1:8000/static/index.html"
+
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
 ENDLOCAL
