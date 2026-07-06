@@ -1,11 +1,47 @@
 @echo off
-rem Run this from the project root to start the backend server.
-cd /d "%~dp0backend"
-if exist "..\.venv\Scripts\activate.bat" (
-    call "..\.venv\Scripts\activate.bat"
-) else (
-    echo WARNING: Virtual environment activate script not found.
-    echo Make sure .venv exists in the project root.
+REM run_backend.bat - Create venv, install deps, ensure .env, and start backend
+REM Usage: Run from project root (double-click or from terminal)
+
+SETLOCAL EnableDelayedExpansion
+REM Root directory of this script
+SET ROOT_DIR=%~dp0
+REM Remove trailing backslash
+IF "%ROOT_DIR:~-1%"=="\" SET ROOT_DIR=%ROOT_DIR:~0,-1%
+
+REM Create virtualenv if missing
+IF NOT EXIST "%ROOT_DIR%\.venv" (
+    echo Creating virtual environment in %ROOT_DIR%\.venv ...
+    python -m venv "%ROOT_DIR%\.venv"
 )
+
+REM Activate virtualenv
+IF EXIST "%ROOT_DIR%\.venv\Scripts\activate.bat" (
+    call "%ROOT_DIR%\.venv\Scripts\activate.bat"
+) ELSE (
+    echo WARNING: Could not find virtualenv activate script.
+)
+
+REM Install backend requirements if not already installed (quick check)
+python -c "import pkgutil,sys; exit(0 if pkgutil.find_loader('fastapi') else 1)" 2>nul
+IF %ERRORLEVEL% NEQ 0 (
+    echo Installing backend requirements...
+    python -m pip install --upgrade pip
+    python -m pip install -r "%ROOT_DIR%\backend\requirements.txt"
+)
+
+REM Ensure .env exists (copy from .env.example if present)
+IF NOT EXIST "%ROOT_DIR%\.env" (
+    IF EXIST "%ROOT_DIR%\.env.example" (
+        echo Creating .env from .env.example
+        copy "%ROOT_DIR%\.env.example" "%ROOT_DIR%\.env" >nul
+    ) ELSE (
+        echo NOTE: .env not found. Create .env with GROQ_API_KEY if needed.
+    )
+)
+
+REM Change into backend and start server
+cd /d "%ROOT_DIR%\backend"
+echo Starting backend on http://0.0.0.0:8000 ...
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
-pause
+
+ENDLOCAL
