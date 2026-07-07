@@ -449,6 +449,7 @@
             <div class="header-controls">
                 <button class="icon-btn" id="darkModeBtn" title="Dark mode">🌙</button>
                 <button class="icon-btn" id="translateBtn" title="Translate" style="display:none;">🌐</button>
+                <button class="icon-btn" id="explainBtn" title="Explain" style="display:none;">❓</button>
             </div>
         </div>
 
@@ -461,6 +462,7 @@
 
         <div class="input-area">
             <div class="input-status" id="inputStatus" aria-live="polite"></div>
+            <div class="explain-output" id="explainOutput" aria-live="polite" style="display:none; padding:8px 12px; border-top:1px solid var(--border-color);"></div>
             <div class="input-row">
                 <button class="reset-btn" id="resetBtn" title="Reset conversation">🔄</button>
                 <div class="input-container">
@@ -505,7 +507,9 @@
         const resetBtn = document.getElementById('resetBtn');
         const darkModeBtn = document.getElementById('darkModeBtn');
         const translateBtn = document.getElementById('translateBtn');
+        const explainBtn = document.getElementById('explainBtn');
         const inputStatus = document.getElementById('inputStatus');
+        const explainOutput = document.getElementById('explainOutput');
 
         // ============================================================
         // INITIALIZATION
@@ -533,6 +537,7 @@
             resetBtn.addEventListener('click', resetConversation);
             darkModeBtn.addEventListener('click', toggleDarkMode);
             translateBtn.addEventListener('click', translateSelectedText);
+            explainBtn.addEventListener('click', showExplanationForSelection);
             document.addEventListener('mouseup', updateSelectedText);
         }
 
@@ -547,6 +552,7 @@
             }
             darkModeBtn.setAttribute('aria-label', 'Toggle dark mode');
             translateBtn.setAttribute('aria-label', 'Translate selected text');
+            explainBtn.setAttribute('aria-label', 'Show explanation for grammar mistakes');
             resetBtn.setAttribute('aria-label', 'Reset conversation');
             sendBtn.setAttribute('aria-label', 'Send message');
         }
@@ -595,6 +601,7 @@
             } else {
                 inputStatus.textContent = '⚠️ Too long. Try a shorter sentence for faster response.';
             }
+            checkGrammarDebounced();
         }
 
         function updateSendButtonState() {
@@ -605,14 +612,70 @@
         // ============================================================
         // TRANSLATION
         // ============================================================
+
         function updateSelectedText() {
             selectedText = window.getSelection().toString();
             if (selectedText.length > 0) {
                 translateBtn.style.display = 'block';
+                // Check grammar for the selected text to decide whether to show explain
+                (async () => {
+                    try {
+                        const resp = await fetch(`${API_BASE_URL}/grammar_check`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text: selectedText })
+                        });
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            const hasTip = data && data.tip && data.tip.length > 0;
+                            explainBtn.style.display = hasTip ? 'inline-block' : 'none';
+                        }
+                    } catch (e) {
+                        // ignore errors
+                    }
+                })();
             } else {
                 translateBtn.style.display = 'none';
+                explainBtn.style.display = 'none';
             }
         }
+
+        // Debounce helper
+        function debounce(fn, delay) {
+            let t = null;
+            return function(...args) {
+                clearTimeout(t);
+                t = setTimeout(() => fn.apply(this, args), delay);
+            };
+        }
+
+        // Check grammar lightly on input and toggle explain button
+        const checkGrammarDebounced = debounce(async () => {
+            const text = messageInput.value.trim();
+            if (!text) {
+                translateBtn.style.display = 'none';
+                explainBtn.style.display = 'none';
+                explainOutput.style.display = 'none';
+                return;
+            }
+
+            try {
+                const resp = await fetch(`${API_BASE_URL}/grammar_check`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text })
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const hasTip = data && data.tip && data.tip.length > 0;
+                    translateBtn.style.display = 'inline-block';
+                    explainBtn.style.display = hasTip ? 'inline-block' : 'none';
+                    if (!hasTip) explainOutput.style.display = 'none';
+                }
+            } catch (e) {
+                // ignore
+            }
+        }, 700);
 
         async function translateSelectedText() {
             if (!selectedText) return;
@@ -635,6 +698,34 @@
                 alert('翻訳サービスに接続できません');
             }
         }
+
+    async function showExplanationForSelection() {
+        const text = selectedText && selectedText.length > 0 ? selectedText : messageInput.value.trim();
+        if (!text) return;
+
+        explainOutput.textContent = 'Loading explanation...';
+        explainOutput.style.display = 'block';
+
+        try {
+            const resp = await fetch(`${API_BASE_URL}/explain`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data && data.explanation && data.explanation.length > 0) {
+                    explainOutput.textContent = data.explanation;
+                } else {
+                    explainOutput.textContent = 'No issues detected.';
+                }
+            } else {
+                explainOutput.textContent = 'Could not fetch explanation.';
+            }
+        } catch (e) {
+            explainOutput.textContent = 'Error while fetching explanation.';
+        }
+    }
 
         // ============================================================
         // MESSAGE SENDING
