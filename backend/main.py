@@ -498,6 +498,82 @@ def get_grammar_issues(text: str) -> List[str]:
 
     return issues
 
+
+def get_grammar_issue_objects(text: str) -> List[dict]:
+    """Return detected grammar issues as objects with hint, correction, and example."""
+    objs: List[dict] = []
+    normalized = text.strip()
+    if not normalized:
+        return objs
+
+    def add(hint: str, correction: Optional[str] = None, example: Optional[str] = None):
+        objs.append({
+            "hint": hint,
+            "correction": correction or "",
+            "example": example or "",
+        })
+
+    if re.search(r"\b(you|we|they|these|those)\s+is\b", normalized, re.IGNORECASE):
+        add("'you/we/they' usually use 'are' instead of 'is'.", "use 'are'", "You are happy.")
+
+    if re.search(r"^(going|learning|studying|working)\s+", normalized, re.IGNORECASE):
+        add("Try adding a subject at the start.", "add 'I'm' or 'We're'", "I'm learning English.")
+
+    if re.search(r"\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+        if not re.search(r"\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+            add("Use 'a' or 'the' before nouns.", "use 'an interesting idea'", "That's an interesting idea.")
+
+    if re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE):
+        add("Avoid double negatives.", "use 'don't' or 'no', not both", "I don't know anything.")
+
+    mistakes = {
+        r"\btheir\s+are\b": ("'their are' → use 'there are'.", "there are", "There are many people."),
+        r"\byour\s+wrong\b": ("'your wrong' → use 'you're wrong'.", "you're wrong", "You're wrong about that."),
+        r"\bits\s+me\b": ("'its me' → use 'it's me'.", "it's me", "It's me who did it."),
+        r"\bi\s+is\b": ("'I is' is incorrect—use 'I am'.", "I am", "I am happy."),
+    }
+    for pattern, (hint, corr, ex) in mistakes.items():
+        if re.search(pattern, normalized, re.IGNORECASE):
+            add(hint, corr, ex)
+
+    for match in re.findall(r"\b(he|she|it)\s+(\w+)\b", normalized, re.IGNORECASE):
+        subj, verb = match
+        verb_lower = verb.lower()
+        exceptions = {"is", "has", "does", "was", "were", "am", "are", "be", "been", "being"}
+        if verb_lower not in exceptions and not verb_lower.endswith('s') and not verb_lower.endswith('ing') and len(verb_lower) > 2:
+            add(f"For '{subj}' the verb often adds 's'.", f"{verb_lower}s", f"{subj} {verb_lower}s every day.")
+            break
+
+    if re.search(r"\bthere\s+is\s+\w+s\b", normalized, re.IGNORECASE):
+        add("Use 'there are' with plural nouns.", "there are", "There are many books.")
+
+    if re.search(r"\ba\s+[aeiouAEIOU]\w+", normalized):
+        add("Use 'an' before vowel sounds.", "an ...", "an apple")
+
+    if re.search(r"\binterested\s+on\b", normalized, re.IGNORECASE):
+        add("Use 'interested in' not 'interested on'.", "interested in", "I'm interested in music.")
+
+    if re.search(r"\btoo\s+much\s+\w+s\b", normalized, re.IGNORECASE):
+        add("Use 'too many' for countable nouns.", "too many", "There are too many people.")
+
+    misspellings = {
+        "recieve": ("spelling: 'recieve' → 'receive'", "receive", "I receive your message."),
+        "definately": ("spelling: 'definately' → 'definitely'", "definitely", "I will definitely come."),
+        "seperate": ("spelling: 'seperate' → 'separate'", "separate", "Keep them separate."),
+        "occured": ("spelling: 'occured' → 'occurred'", "occurred", "It occurred yesterday."),
+    }
+    for bad, (hint, corr, ex) in misspellings.items():
+        if re.search(rf"\b{bad}\b", normalized, re.IGNORECASE):
+            add(hint, corr, ex)
+
+    if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
+        add("Use 'too' (two o's) for degree.", "too", "I'm too tired.")
+
+    if len(normalized.split()) <= 2:
+        add("Please tell me more so I can help you better.", "", "")
+
+    return objs
+
 def extract_translation_friendly(text: str) -> str:
     """Extract important phrases for translation (kept for compatibility)."""
     words = text.split()
@@ -654,17 +730,26 @@ async def explain(request: ExplainRequest):
     if not request.text or not request.text.strip():
         return ExplainResponse(explanations=[])
 
-    tips = get_grammar_issues(request.text)
-    if not tips:
+    objs = get_grammar_issue_objects(request.text)
+    if not objs:
         return ExplainResponse(explanations=[])
 
     explanations = []
-    for t in tips:
+    for o in objs:
+        # Build a detailed English string combining hint, correction, and example
+        parts = []
+        if o.get('hint'):
+            parts.append(o.get('hint'))
+        if o.get('correction'):
+            parts.append(f"Correction: {o.get('correction')}")
+        if o.get('example'):
+            parts.append(f"Example: {o.get('example')}")
+        combined = "\n".join(parts)
         try:
-            jp = await translate_text(t)
+            jp = await translate_text(combined)
             explanations.append(jp)
         except Exception:
-            explanations.append("")
+            explanations.append(combined)
 
     return ExplainResponse(explanations=explanations)
 
