@@ -1,6 +1,6 @@
-# talk-English
+# AIと話そう！
 
-Talk English Tutor は、FastAPI と外部 AI API を使った英語学習チャットアプリです。
+AIと話そう！は、FastAPI と外部 AI API を使った英語学習チャットアプリです。
 このアプリはブラウザ UI と API 連携にフォーカスし、ローカルで大きなモデルを実行しません。
 
 ## 概要

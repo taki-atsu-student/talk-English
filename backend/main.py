@@ -1,5 +1,5 @@
 """
-Talk English Tutor - FastAPI Backend v3.1
+AIと話そう！ - FastAPI Backend v3.1
 Enhanced with translation, grammar feedback, and error handling
 
 Features:
@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 load_dotenv()
-app = FastAPI(title="Talk English Tutor API v3.1", version="3.1.0")
+app = FastAPI(title="AIと話そう！ API v3.1", version="3.1.0")
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
@@ -169,7 +169,7 @@ def local_fallback_response(text: str, user_level: Optional[str] = None) -> str:
     if re.search(r"\bdo you\b.*\benglish\b|\bcan you\b.*\benglish\b", normalized):
         return "Yes, I can help you practise English. What would you like to talk about?"
     if re.search(r"\bwhat(?:'s| is) your name\b|\byour name\b", normalized):
-        return "I'm Talk English Tutor. Nice to meet you! What's your name?"
+        return "I'm AIと話そう！. Nice to meet you! What's your name?"
     if re.search(r"\bmy name\b", normalized):
         return "Nice to meet you! How can I help you practise English today?"
     if re.search(r"\bi(?:'m| am)\b.*\b(learning|studying|studying English|study English)\b|\bi wanna\b.*\bstudy\b", normalized):
@@ -485,7 +485,7 @@ async def reset_session(request: ResetRequest):
 @app.get("/")
 async def root():
     return {
-        "app": "Talk English Tutor v3.1",
+        "app": "AIと話そう！ v3.1",
         "status": "running",
         "features": ["Chat", "Translation", "Grammar Feedback", "Dark Mode", "Error Retry"]
     }

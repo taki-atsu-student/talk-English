@@ -1,5 +1,5 @@
 """
-Test suite for Talk English Tutor Backend
+Test suite for AIと話そう！ Backend
 """
 
 import pytest
