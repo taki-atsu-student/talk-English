@@ -352,33 +352,78 @@ def check_grammar_gentle(text: str) -> Optional[str]:
     issues = []
     normalized = text.strip()
 
-    # Check 1: "is" instead of "are"
-    if re.search(r'\b(you|we|they|these|those)\s+is\b', normalized, re.IGNORECASE):
+    # 1) Subject-verb agreement: you/we/they + is -> are
+    if re.search(r"\b(you|we|they|these|those)\s+is\b", normalized, re.IGNORECASE):
         issues.append("💡 Tip: 'you/we/they' usually use 'are' instead of 'is'.")
 
-    # Check 2: Missing subject
-    if re.search(r'^(going|learning|studying|working)\s+', normalized, re.IGNORECASE):
+    # 2) Missing subject at the start of a sentence
+    if re.search(r"^(going|learning|studying|working)\s+", normalized, re.IGNORECASE):
         issues.append("💡 Tip: Try adding a subject like 'I'm' or 'We're' at the start.")
 
-    # Check 3: Missing article
-    if re.search(r'\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem)\b', normalized, re.IGNORECASE) is None and re.search(r'\b(interesting|idea|thing|problem)\b', normalized, re.IGNORECASE):
-        issues.append("💡 Tip: Use 'a' or 'the' before nouns: 'an interesting idea' or 'the problem'.")
+    # 3) Missing article before common nouns
+    if re.search(r"\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+        if not re.search(r"\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+            issues.append("💡 Tip: Use 'a' or 'the' before nouns: e.g., 'an interesting idea'.")
 
-    # Check 4: Double negation
+    # 4) Double negation
     if re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE):
         issues.append("💡 Tip: Avoid double negatives—use either 'no' or 'don't', not both.")
 
-    # Check 5: Common mistakes
+    # 5) Common phrase mistakes (dictionary)
     mistakes = {
         r"\btheir\s+are\b": "'their are' → use 'there are'.",
         r"\byour\s+wrong\b": "'your wrong' → use 'you're wrong'.",
         r"\bits\s+me\b": "'its me' → use 'it's me'.",
         r"\bi\s+is\b": "'I is' is incorrect—use 'I am'.",
     }
-
     for pattern, correction in mistakes.items():
         if re.search(pattern, normalized, re.IGNORECASE):
             issues.append(f"💡 {correction}")
+
+    # 6) Third-person singular missing 's' (simple heuristic)
+    # detect patterns like 'he go', 'she want' (not exhaustive)
+    for match in re.findall(r"\b(he|she|it)\s+(\w+)\b", normalized, re.IGNORECASE):
+        subj, verb = match
+        verb_lower = verb.lower()
+        exceptions = {"is", "has", "does", "was", "were", "am", "are", "be", "been", "being"}
+        if verb_lower not in exceptions and not verb_lower.endswith('s') and not verb_lower.endswith('ing') and len(verb_lower) > 2:
+            issues.append(f"💡 Tip: For 'he/she/it' the verb often adds 's' — e.g., 'he {verb_lower}s'.")
+            break
+
+    # 7) 'there is' used with plural nouns
+    if re.search(r"\bthere\s+is\s+\w+s\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: For plural things use 'there are' (e.g., 'there are many people').")
+
+    # 8) 'a' vs 'an' before vowel-starting words (simple check)
+    if re.search(r"\ba\s+[aeiouAEIOU]\w+", normalized):
+        issues.append("💡 Tip: Use 'an' before vowel sounds: 'an apple', 'an idea'.")
+
+    # 9) 'interested on' -> 'interested in'
+    if re.search(r"\binterested\s+on\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Say 'interested in' rather than 'interested on'.")
+
+    # 10) 'too much people' -> 'too many people'
+    if re.search(r"\btoo\s+much\s+\w+s\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Use 'too many' for countable nouns: 'too many people'.")
+
+    # 11) Common misspellings -> quick suggestions
+    misspellings = {
+        "recieve": "receive",
+        "definately": "definitely",
+        "seperate": "separate",
+        "occured": "occurred",
+    }
+    for bad, good in misspellings.items():
+        if re.search(rf"\b{bad}\b", normalized, re.IGNORECASE):
+            issues.append(f"💡 Spelling: '{bad}' → '{good}'.")
+
+    # 12) 'to' vs 'too'
+    if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Use 'too much' (with two o's) for degree: 'too much'.")
+
+    # 13) Short/incomplete input guidance (not an error but helpful)
+    if len(normalized.split()) <= 2:
+        issues.append("💡 Please tell me more so I can help you better.")
 
     return issues[0] if issues else None
 
