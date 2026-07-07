@@ -210,7 +210,7 @@ class GrammarRequest(BaseModel):
 
 
 class GrammarResponse(BaseModel):
-    tip: Optional[str] = None
+    tips: List[str] = []
 
 
 class ExplainRequest(BaseModel):
@@ -218,7 +218,7 @@ class ExplainRequest(BaseModel):
 
 
 class ExplainResponse(BaseModel):
-    explanation: Optional[str] = None
+    explanations: List[str] = []
 
 class ResetRequest(BaseModel):
     session_id: Optional[str] = None
@@ -427,6 +427,77 @@ def check_grammar_gentle(text: str) -> Optional[str]:
 
     return issues[0] if issues else None
 
+
+def get_grammar_issues(text: str) -> List[str]:
+    """Return all grammar/helpful hints found in text as a list."""
+    issues = []
+    normalized = text.strip()
+
+    if not normalized:
+        return []
+
+    # reuse the same checks as check_grammar_gentle but accumulate all
+    if re.search(r"\b(you|we|they|these|those)\s+is\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: 'you/we/they' usually use 'are' instead of 'is'.")
+
+    if re.search(r"^(going|learning|studying|working)\s+", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Try adding a subject like 'I'm' or 'We're' at the start.")
+
+    if re.search(r"\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+        if not re.search(r"\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+            issues.append("💡 Tip: Use 'a' or 'the' before nouns: e.g., 'an interesting idea'.")
+
+    if re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Avoid double negatives—use either 'no' or 'don't', not both.")
+
+    mistakes = {
+        r"\btheir\s+are\b": "'their are' → use 'there are'.",
+        r"\byour\s+wrong\b": "'your wrong' → use 'you're wrong'.",
+        r"\bits\s+me\b": "'its me' → use 'it's me'.",
+        r"\bi\s+is\b": "'I is' is incorrect—use 'I am'.",
+    }
+    for pattern, correction in mistakes.items():
+        if re.search(pattern, normalized, re.IGNORECASE):
+            issues.append(f"💡 {correction}")
+
+    for match in re.findall(r"\b(he|she|it)\s+(\w+)\b", normalized, re.IGNORECASE):
+        subj, verb = match
+        verb_lower = verb.lower()
+        exceptions = {"is", "has", "does", "was", "were", "am", "are", "be", "been", "being"}
+        if verb_lower not in exceptions and not verb_lower.endswith('s') and not verb_lower.endswith('ing') and len(verb_lower) > 2:
+            issues.append(f"💡 Tip: For 'he/she/it' the verb often adds 's' — e.g., 'he {verb_lower}s'.")
+            break
+
+    if re.search(r"\bthere\s+is\s+\w+s\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: For plural things use 'there are' (e.g., 'there are many people').")
+
+    if re.search(r"\ba\s+[aeiouAEIOU]\w+", normalized):
+        issues.append("💡 Tip: Use 'an' before vowel sounds: 'an apple', 'an idea'.")
+
+    if re.search(r"\binterested\s+on\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Say 'interested in' rather than 'interested on'.")
+
+    if re.search(r"\btoo\s+much\s+\w+s\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Use 'too many' for countable nouns: 'too many people'.")
+
+    misspellings = {
+        "recieve": "receive",
+        "definately": "definitely",
+        "seperate": "separate",
+        "occured": "occurred",
+    }
+    for bad, good in misspellings.items():
+        if re.search(rf"\b{bad}\b", normalized, re.IGNORECASE):
+            issues.append(f"💡 Spelling: '{bad}' → '{good}'.")
+
+    if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
+        issues.append("💡 Tip: Use 'too much' (with two o's) for degree: 'too much'.")
+
+    if len(normalized.split()) <= 2:
+        issues.append("💡 Please tell me more so I can help you better.")
+
+    return issues
+
 def extract_translation_friendly(text: str) -> str:
     """Extract important phrases for translation (kept for compatibility)."""
     words = text.split()
@@ -571,28 +642,31 @@ async def translate(request: TranslateRequest):
 async def grammar_check(request: GrammarRequest):
     """Return a short English tip if a grammar issue is detected, otherwise empty."""
     if not request.text or not request.text.strip():
-        return GrammarResponse(tip="")
+        return GrammarResponse(tips=[])
 
-    tip = check_grammar_gentle(request.text)
-    return GrammarResponse(tip=tip or "")
+    tips = get_grammar_issues(request.text)
+    return GrammarResponse(tips=tips)
 
 
 @app.post("/explain", response_model=ExplainResponse)
 async def explain(request: ExplainRequest):
     """Return a Japanese explanation when incorrect usage is detected."""
     if not request.text or not request.text.strip():
-        return ExplainResponse(explanation="")
+        return ExplainResponse(explanations=[])
 
-    tip = check_grammar_gentle(request.text)
-    if not tip:
-        return ExplainResponse(explanation="")
+    tips = get_grammar_issues(request.text)
+    if not tips:
+        return ExplainResponse(explanations=[])
 
-    # Translate the tip to Japanese for user-friendly explanation
-    try:
-        jp = await translate_text(tip)
-        return ExplainResponse(explanation=jp)
-    except Exception:
-        return ExplainResponse(explanation="")
+    explanations = []
+    for t in tips:
+        try:
+            jp = await translate_text(t)
+            explanations.append(jp)
+        except Exception:
+            explanations.append("")
+
+    return ExplainResponse(explanations=explanations)
 
 @app.post("/reset")
 async def reset_session(request: ResetRequest):
