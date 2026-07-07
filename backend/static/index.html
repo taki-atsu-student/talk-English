@@ -715,7 +715,52 @@
             if (resp.ok) {
                 const data = await resp.json();
                 if (data && data.explanations && data.explanations.length > 0) {
-                    explainOutput.textContent = data.explanations.join('\n\n');
+                    // After showing explanations, also fetch structured suggestions
+                    explainOutput.innerHTML = '';
+                    data.explanations.forEach((ex, idx) => {
+                        const p = document.createElement('div');
+                        p.style.marginBottom = '8px';
+                        p.textContent = ex;
+                        explainOutput.appendChild(p);
+                    });
+
+                    // fetch suggestions
+                    try {
+                        const sresp = await fetch(`${API_BASE_URL}/suggest`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text })
+                        });
+                        if (sresp.ok) {
+                            const sdata = await sresp.json();
+                            if (sdata && sdata.suggestions && sdata.suggestions.length > 0) {
+                                const list = document.createElement('div');
+                                list.style.marginTop = '6px';
+                                sdata.suggestions.forEach((s, i) => {
+                                    const item = document.createElement('div');
+                                    item.style.borderTop = '1px solid var(--border-color)';
+                                    item.style.paddingTop = '6px';
+                                    const info = document.createElement('div');
+                                    info.textContent = `${s.hint || ''}`;
+                                    const orig = document.createElement('div');
+                                    orig.style.marginTop = '4px';
+                                    orig.style.fontFamily = 'monospace';
+                                    orig.textContent = `→ ${s.original || '(detected)'}  → ${s.replacement || '(suggestion)'}`;
+                                    const btn = document.createElement('button');
+                                    btn.textContent = 'Apply';
+                                    btn.style.marginLeft = '8px';
+                                    btn.onclick = () => applySuggestion(s);
+                                    item.appendChild(info);
+                                    item.appendChild(orig);
+                                    item.appendChild(btn);
+                                    list.appendChild(item);
+                                });
+                                explainOutput.appendChild(list);
+                            }
+                        }
+                    } catch (e) {
+                        // ignore
+                    }
                 } else {
                     explainOutput.textContent = 'No issues detected.';
                 }
@@ -725,6 +770,28 @@
         } catch (e) {
             explainOutput.textContent = 'Error while fetching explanation.';
         }
+    }
+
+    function applySuggestion(s) {
+        // Try to apply replacement into the message input: replace first occurrence of original
+        const original = s.original || '';
+        const replacement = s.replacement || '';
+        if (!original && !replacement) return;
+
+        let value = messageInput.value;
+        if (original && value.includes(original)) {
+            messageInput.value = value.replace(original, replacement);
+        } else if (original && selectedText && selectedText.length > 0 && value.includes(selectedText)) {
+            // if selection inside input
+            messageInput.value = value.replace(selectedText, replacement);
+        } else {
+            // fallback: replace first word-like occurrence
+            messageInput.value = replacement + (value ? (' ' + value) : '');
+        }
+
+        // Rerun checks and focus
+        checkGrammarDebounced();
+        messageInput.focus();
     }
 
         // ============================================================
