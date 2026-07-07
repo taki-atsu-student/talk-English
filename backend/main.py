@@ -204,6 +204,22 @@ class TranslateRequest(BaseModel):
 class TranslateResponse(BaseModel):
     translation: str
 
+
+class GrammarRequest(BaseModel):
+    text: str
+
+
+class GrammarResponse(BaseModel):
+    tip: Optional[str] = None
+
+
+class ExplainRequest(BaseModel):
+    text: str
+
+
+class ExplainResponse(BaseModel):
+    explanation: Optional[str] = None
+
 class ResetRequest(BaseModel):
     session_id: Optional[str] = None
 
@@ -504,6 +520,34 @@ async def translate(request: TranslateRequest):
 
     translation = await translate_text(request.text)
     return TranslateResponse(translation=translation)
+
+
+@app.post("/grammar_check", response_model=GrammarResponse)
+async def grammar_check(request: GrammarRequest):
+    """Return a short English tip if a grammar issue is detected, otherwise empty."""
+    if not request.text or not request.text.strip():
+        return GrammarResponse(tip="")
+
+    tip = check_grammar_gentle(request.text)
+    return GrammarResponse(tip=tip or "")
+
+
+@app.post("/explain", response_model=ExplainResponse)
+async def explain(request: ExplainRequest):
+    """Return a Japanese explanation when incorrect usage is detected."""
+    if not request.text or not request.text.strip():
+        return ExplainResponse(explanation="")
+
+    tip = check_grammar_gentle(request.text)
+    if not tip:
+        return ExplainResponse(explanation="")
+
+    # Translate the tip to Japanese for user-friendly explanation
+    try:
+        jp = await translate_text(tip)
+        return ExplainResponse(explanation=jp)
+    except Exception:
+        return ExplainResponse(explanation="")
 
 @app.post("/reset")
 async def reset_session(request: ResetRequest):
