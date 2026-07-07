@@ -227,6 +227,19 @@ class ExplainRequest(BaseModel):
 class ExplainResponse(BaseModel):
     explanations: List[str] = []
 
+
+class SuggestionItem(BaseModel):
+    original: str
+    replacement: str
+    offset: int
+    length: int
+    hint: Optional[str] = None
+    example: Optional[str] = None
+
+
+class SuggestResponse(BaseModel):
+    suggestions: List[SuggestionItem] = []
+
 class ResetRequest(BaseModel):
     session_id: Optional[str] = None
 
@@ -513,25 +526,39 @@ def get_grammar_issue_objects(text: str) -> List[dict]:
     if not normalized:
         return objs
 
-    def add(hint: str, correction: Optional[str] = None, example: Optional[str] = None):
+    def add(hint: str, correction: Optional[str] = None, example: Optional[str] = None, match_text: Optional[str] = None):
+        # find match_text in normalized to compute offset/length
+        offset = -1
+        length = 0
+        if match_text:
+            m = re.search(re.escape(match_text), normalized, re.IGNORECASE)
+            if m:
+                offset = m.start()
+                length = m.end() - m.start()
         objs.append({
             "hint": hint,
             "correction": correction or "",
             "example": example or "",
+            "offset": offset,
+            "length": length,
+            "original": match_text or "",
         })
 
-    if re.search(r"\b(you|we|they|these|those)\s+is\b", normalized, re.IGNORECASE):
-        add("'you/we/they' usually use 'are' instead of 'is'.", "use 'are'", "You are happy.")
+    m = re.search(r"\b(you|we|they|these|those)\s+is\b", normalized, re.IGNORECASE)
+    if m:
+        add("'you/we/they' usually use 'are' instead of 'is'.", "use 'are'", "You are happy.", match_text=m.group(0))
 
-    if re.search(r"^(going|learning|studying|working)\s+", normalized, re.IGNORECASE):
-        add("Try adding a subject at the start.", "add 'I'm' or 'We're'", "I'm learning English.")
+    m = re.search(r"^(going|learning|studying|working)\s+", normalized, re.IGNORECASE)
+    if m:
+        add("Try adding a subject at the start.", "add 'I'm' or 'We're'", "I'm learning English.", match_text=m.group(0).strip())
 
-    if re.search(r"\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
-        if not re.search(r"\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
-            add("Use 'a' or 'the' before nouns.", "use 'an interesting idea'", "That's an interesting idea.")
+    m = re.search(r"\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE)
+    if m and not re.search(r"\b(a|an|the)\s+\w+\s+\b(interesting|idea|thing|problem|choice|question)\b", normalized, re.IGNORECASE):
+        add("Use 'a' or 'the' before nouns.", "use 'an interesting idea'", "That's an interesting idea.", match_text=m.group(0))
 
-    if re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE):
-        add("Avoid double negatives.", "use 'don't' or 'no', not both", "I don't know anything.")
+    m = re.search(r"\bno\s+\w*n't\b|\bdon't\s+\w*not\b", normalized, re.IGNORECASE)
+    if m:
+        add("Avoid double negatives.", "use 'don't' or 'no', not both", "I don't know anything.", match_text=m.group(0))
 
     mistakes = {
         r"\btheir\s+are\b": ("'their are' → use 'there are'.", "there are", "There are many people."),
@@ -540,28 +567,35 @@ def get_grammar_issue_objects(text: str) -> List[dict]:
         r"\bi\s+is\b": ("'I is' is incorrect—use 'I am'.", "I am", "I am happy."),
     }
     for pattern, (hint, corr, ex) in mistakes.items():
-        if re.search(pattern, normalized, re.IGNORECASE):
-            add(hint, corr, ex)
+        mm = re.search(pattern, normalized, re.IGNORECASE)
+        if mm:
+            add(hint, corr, ex, match_text=mm.group(0))
 
     for match in re.findall(r"\b(he|she|it)\s+(\w+)\b", normalized, re.IGNORECASE):
         subj, verb = match
         verb_lower = verb.lower()
         exceptions = {"is", "has", "does", "was", "were", "am", "are", "be", "been", "being"}
         if verb_lower not in exceptions and not verb_lower.endswith('s') and not verb_lower.endswith('ing') and len(verb_lower) > 2:
-            add(f"For '{subj}' the verb often adds 's'.", f"{verb_lower}s", f"{subj} {verb_lower}s every day.")
+            # attempt to match the actual substring
+            mm = re.search(rf"\b{subj}\s+{verb}\b", normalized, re.IGNORECASE)
+            add(f"For '{subj}' the verb often adds 's'.", f"{verb_lower}s", f"{subj} {verb_lower}s every day.", match_text=mm.group(0) if mm else f"{subj} {verb}")
             break
 
-    if re.search(r"\bthere\s+is\s+\w+s\b", normalized, re.IGNORECASE):
-        add("Use 'there are' with plural nouns.", "there are", "There are many books.")
+    mm = re.search(r"\bthere\s+is\s+\w+s\b", normalized, re.IGNORECASE)
+    if mm:
+        add("Use 'there are' with plural nouns.", "there are", "There are many books.", match_text=mm.group(0))
 
-    if re.search(r"\ba\s+[aeiouAEIOU]\w+", normalized):
-        add("Use 'an' before vowel sounds.", "an ...", "an apple")
+    mm = re.search(r"\ba\s+[aeiouAEIOU]\w+", normalized)
+    if mm:
+        add("Use 'an' before vowel sounds.", "an ...", "an apple", match_text=mm.group(0))
 
-    if re.search(r"\binterested\s+on\b", normalized, re.IGNORECASE):
-        add("Use 'interested in' not 'interested on'.", "interested in", "I'm interested in music.")
+    mm = re.search(r"\binterested\s+on\b", normalized, re.IGNORECASE)
+    if mm:
+        add("Use 'interested in' not 'interested on'.", "interested in", "I'm interested in music.", match_text=mm.group(0))
 
-    if re.search(r"\btoo\s+much\s+\w+s\b", normalized, re.IGNORECASE):
-        add("Use 'too many' for countable nouns.", "too many", "There are too many people.")
+    mm = re.search(r"\btoo\s+much\s+\w+s\b", normalized, re.IGNORECASE)
+    if mm:
+        add("Use 'too many' for countable nouns.", "too many", "There are too many people.", match_text=mm.group(0))
 
     misspellings = {
         "recieve": ("spelling: 'recieve' → 'receive'", "receive", "I receive your message."),
@@ -570,14 +604,16 @@ def get_grammar_issue_objects(text: str) -> List[dict]:
         "occured": ("spelling: 'occured' → 'occurred'", "occurred", "It occurred yesterday."),
     }
     for bad, (hint, corr, ex) in misspellings.items():
-        if re.search(rf"\b{bad}\b", normalized, re.IGNORECASE):
-            add(hint, corr, ex)
+        mm = re.search(rf"\b{bad}\b", normalized, re.IGNORECASE)
+        if mm:
+            add(hint, corr, ex, match_text=mm.group(0))
 
-    if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
-        add("Use 'too' (two o's) for degree.", "too", "I'm too tired.")
+    mm = re.search(r"\bto\s+much\b", normalized, re.IGNORECASE)
+    if mm:
+        add("Use 'too' (two o's) for degree.", "too", "I'm too tired.", match_text=mm.group(0))
 
     if len(normalized.split()) <= 2:
-        add("Please tell me more so I can help you better.", "", "")
+        add("Please tell me more so I can help you better.", "", "", match_text=normalized)
 
     return objs
 
@@ -597,19 +633,30 @@ def advanced_get_grammar_issue_objects(text: str) -> List[dict]:
             correction = replacements[0] if replacements else ''
             # Build a short example by applying first replacement if possible
             example = ''
+            offset = -1
+            length = 0
             try:
                 off = int(m.offset)
                 length = int(m.errorLength)
+                offset = off
                 if correction:
                     example = text[:off] + correction + text[off+length:]
                 else:
                     example = ''
             except Exception:
                 example = ''
+            original = ''
+            try:
+                original = text[offset:offset+length] if offset >= 0 and length > 0 else ''
+            except Exception:
+                original = ''
             objs.append({
                 'hint': hint,
                 'correction': correction,
                 'example': example,
+                'offset': offset,
+                'length': length,
+                'original': original,
             })
         return objs
     except Exception:
@@ -805,6 +852,52 @@ async def explain(request: ExplainRequest):
             explanations.append(combined)
 
     return ExplainResponse(explanations=explanations)
+
+
+@app.post("/suggest", response_model=SuggestResponse)
+async def suggest(request: ExplainRequest):
+    """Return correction suggestions with offsets so the client can apply them."""
+    if not request.text or not request.text.strip():
+        return SuggestResponse(suggestions=[])
+
+    # Prefer LanguageTool if available
+    if LANGTOOL_AVAILABLE:
+        objs = advanced_get_grammar_issue_objects(request.text)
+        if not objs:
+            objs = get_grammar_issue_objects(request.text)
+    else:
+        objs = get_grammar_issue_objects(request.text)
+
+    suggestions = []
+    for o in objs:
+        original = o.get('original', '')
+        replacement = o.get('correction', '')
+        offset = o.get('offset', -1)
+        length = o.get('length', 0)
+        hint = o.get('hint', '')
+        example = o.get('example', '')
+        # If we don't have explicit original, try to extract from text by hint words
+        suggestions.append({
+            'original': original or '',
+            'replacement': replacement or '',
+            'offset': offset if isinstance(offset, int) else -1,
+            'length': length if isinstance(length, int) else 0,
+            'hint': hint,
+            'example': example,
+        })
+
+    # Convert to Pydantic model
+    items = []
+    for s in suggestions:
+        items.append(SuggestionItem(
+            original=s['original'],
+            replacement=s['replacement'],
+            offset=s['offset'],
+            length=s['length'],
+            hint=s['hint'],
+            example=s['example']
+        ))
+    return SuggestResponse(suggestions=items)
 
 @app.post("/reset")
 async def reset_session(request: ResetRequest):
