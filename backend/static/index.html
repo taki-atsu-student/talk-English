@@ -627,7 +627,7 @@
                         });
                         if (resp.ok) {
                             const data = await resp.json();
-                            const hasTip = data && data.tip && data.tip.length > 0;
+                            const hasTip = data && data.tips && data.tips.length > 0;
                             explainBtn.style.display = hasTip ? 'inline-block' : 'none';
                         }
                     } catch (e) {
@@ -667,7 +667,7 @@
                 });
                 if (resp.ok) {
                     const data = await resp.json();
-                    const hasTip = data && data.tip && data.tip.length > 0;
+                    const hasTip = data && data.tips && data.tips.length > 0;
                     translateBtn.style.display = 'inline-block';
                     explainBtn.style.display = hasTip ? 'inline-block' : 'none';
                     if (!hasTip) explainOutput.style.display = 'none';
@@ -714,8 +714,8 @@
             });
             if (resp.ok) {
                 const data = await resp.json();
-                if (data && data.explanation && data.explanation.length > 0) {
-                    explainOutput.textContent = data.explanation;
+                if (data && data.explanations && data.explanations.length > 0) {
+                    explainOutput.textContent = data.explanations.join('\n\n');
                 } else {
                     explainOutput.textContent = 'No issues detected.';
                 }
