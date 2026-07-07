@@ -367,41 +367,70 @@ def check_grammar_gentle(text: str) -> Optional[str]:
     return issues[0] if issues else None
 
 def extract_translation_friendly(text: str) -> str:
-    """Extract important phrases for translation"""
+    """Extract important phrases for translation (kept for compatibility)."""
     words = text.split()
     return ' '.join(words[:15]) if len(words) > 15 else text
 
 # =====================================================================
 # TRANSLATION
 # =====================================================================
+async def _chunk_text(text: str, max_chars: int = 1000):
+    """Yield text chunks not exceeding max_chars, breaking on spaces when possible."""
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(start + max_chars, length)
+        if end < length:
+            # try to roll back to last space to avoid cutting words
+            last_space = text.rfind(' ', start, end)
+            if last_space > start:
+                end = last_space
+        yield text[start:end].strip()
+        start = end
+
+
 async def translate_text(text: str) -> str:
-    """Translate English to Japanese using Google Translate API or fallback"""
+    """Translate English to Japanese by chunking long texts and joining results.
+
+    Uses the unofficial Google Translate web endpoint for small chunks. This
+    function will split long input into safe-sized pieces and concatenate
+    translated segments to support long-text translation.
+    """
+    if not text or not text.strip():
+        return ""
+
+    translated_parts = []
     try:
-        # Use free Google Translate API
-        async with httpx.AsyncClient(timeout=3) as client:
-            response = await client.get(
-                "https://translate.googleapis.com/translate_a/single",
-                params={
-                    "client": "gtx",
-                    "sl": "en",
-                    "tl": "ja",
-                    "dt": "t",
-                    "q": text[:200]
-                }
-            )
-            if response.status_code == 200:
+        async with httpx.AsyncClient(timeout=10) as client:
+            async for chunk in _chunk_text(text, max_chars=1200):
                 try:
-                    result = response.json()
-                    if result and result[0]:
-                        # Google returns segments inside result[0]; join them all
-                        translated_segments = [segment[0] for segment in result[0] if segment and len(segment) > 0]
-                        return "".join(translated_segments).strip()
-                except:
-                    pass
-    except:
-        pass
-    
-    return "(Translation unavailable)"
+                    response = await client.get(
+                        "https://translate.googleapis.com/translate_a/single",
+                        params={
+                            "client": "gtx",
+                            "sl": "en",
+                            "tl": "ja",
+                            "dt": "t",
+                            "q": chunk
+                        }
+                    )
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result and result[0]:
+                            translated_segments = [seg[0] for seg in result[0] if seg and len(seg) > 0]
+                            translated_parts.append("".join(translated_segments))
+                        else:
+                            translated_parts.append("")
+                    else:
+                        translated_parts.append("")
+                except Exception:
+                    translated_parts.append("")
+    except Exception:
+        return "(Translation unavailable)"
+
+    # Join with double newlines between chunks to preserve paragraph breaks
+    final = "\n\n".join(p.strip() for p in translated_parts if p is not None)
+    return final.strip() if final else "(Translation unavailable)"
 
 # =====================================================================
 # ENDPOINTS
@@ -469,10 +498,10 @@ async def chat(request: ChatRequest):
 
 @app.post("/translate", response_model=TranslateResponse)
 async def translate(request: TranslateRequest):
-    """Translate selected text to Japanese"""
-    if not request.text or len(request.text) > 300:
+    """Translate selected text to Japanese. Long text is supported via chunking."""
+    if not request.text or not request.text.strip():
         raise HTTPException(status_code=400, detail="Invalid text")
-    
+
     translation = await translate_text(request.text)
     return TranslateResponse(translation=translation)
 
