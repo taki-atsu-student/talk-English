@@ -36,6 +36,13 @@ try:
 except ImportError:
     TRANSFORMERS_AVAILABLE = False
 
+try:
+    import language_tool_python
+    LANGTOOL_AVAILABLE = True
+except Exception:
+    language_tool_python = None
+    LANGTOOL_AVAILABLE = False
+
 # Logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -574,6 +581,40 @@ def get_grammar_issue_objects(text: str) -> List[dict]:
 
     return objs
 
+
+def advanced_get_grammar_issue_objects(text: str) -> List[dict]:
+    """Use LanguageTool to produce grammar issue objects when available."""
+    objs: List[dict] = []
+    if not LANGTOOL_AVAILABLE:
+        return objs
+
+    try:
+        tool = language_tool_python.LanguageTool('en-US')
+        matches = tool.check(text)
+        for m in matches:
+            hint = m.message or ''
+            replacements = getattr(m, 'replacements', []) or []
+            correction = replacements[0] if replacements else ''
+            # Build a short example by applying first replacement if possible
+            example = ''
+            try:
+                off = int(m.offset)
+                length = int(m.errorLength)
+                if correction:
+                    example = text[:off] + correction + text[off+length:]
+                else:
+                    example = ''
+            except Exception:
+                example = ''
+            objs.append({
+                'hint': hint,
+                'correction': correction,
+                'example': example,
+            })
+        return objs
+    except Exception:
+        return []
+
 def extract_translation_friendly(text: str) -> str:
     """Extract important phrases for translation (kept for compatibility)."""
     words = text.split()
@@ -720,7 +761,12 @@ async def grammar_check(request: GrammarRequest):
     if not request.text or not request.text.strip():
         return GrammarResponse(tips=[])
 
-    tips = get_grammar_issues(request.text)
+    # Prefer LanguageTool if available for higher-quality detection
+    if LANGTOOL_AVAILABLE:
+        objs = advanced_get_grammar_issue_objects(request.text)
+        tips = [o.get('hint', '') for o in objs]
+    else:
+        tips = get_grammar_issues(request.text)
     return GrammarResponse(tips=tips)
 
 
@@ -730,7 +776,14 @@ async def explain(request: ExplainRequest):
     if not request.text or not request.text.strip():
         return ExplainResponse(explanations=[])
 
-    objs = get_grammar_issue_objects(request.text)
+    # Prefer LanguageTool if available
+    if LANGTOOL_AVAILABLE:
+        objs = advanced_get_grammar_issue_objects(request.text)
+        # If LanguageTool returned nothing, fall back to rule-based
+        if not objs:
+            objs = get_grammar_issue_objects(request.text)
+    else:
+        objs = get_grammar_issue_objects(request.text)
     if not objs:
         return ExplainResponse(explanations=[])
 
