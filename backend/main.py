@@ -182,13 +182,13 @@ def local_fallback_response(text: str, user_level: Optional[str] = None) -> str:
     if re.search(r"\bi(?:'m| am)\b.*\b(learning|studying|studying English|study English)\b|\bi wanna\b.*\bstudy\b", normalized):
         return "Great! I can help you study English. What topic or phrase do you want to practise?"
     if re.search(r"\bhello\b|\bhi\b|\bhey\b", normalized):
-        return "Hello! Let's practise English together. What would you like to say?"
+        return "Hello! Let's practise English together. What would you like to talk about? You can ask me questions, tell me about your day, or we can discuss any topic!"
     if re.search(r"\bhow are you\b|\bhow's it going\b|\bwhat's up\b", normalized):
-        return "I'm fine, thank you! How about you?"
+        return "I'm doing great, thanks for asking! How about you? Feel free to share what's on your mind in English."
     if re.search(r"\bwhere\b|\bwhen\b|\bwhat\b|\bwho\b|\bhow\b", normalized) and len(normalized.split()) > 2:
         return "That's an interesting question. Can you say more about what you want to practise in English?"
     if len(normalized.split()) <= 2:
-        return "Please tell me more so I can help you better."
+        return "I'd like to help you practise English! Could you tell me more? For example, you could ask me a question, describe something, or share your thoughts about a topic."
     return "I can help with English practice. Please ask me a question or say something more specific."
 
 # =====================================================================
@@ -441,9 +441,8 @@ def check_grammar_gentle(text: str) -> Optional[str]:
     if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
         issues.append("💡 Tip: Use 'too much' (with two o's) for degree: 'too much'.")
 
-    # 13) Short/incomplete input guidance (not an error but helpful)
-    if len(normalized.split()) <= 2:
-        issues.append("💡 Please tell me more so I can help you better.")
+    # 13) Short/incomplete input guidance
+    # Skip feedback for very short input - main message handles this
 
     return issues[0] if issues else None
 
@@ -513,8 +512,7 @@ def get_grammar_issues(text: str) -> List[str]:
     if re.search(r"\bto\s+much\b", normalized, re.IGNORECASE):
         issues.append("💡 Tip: Use 'too much' (with two o's) for degree: 'too much'.")
 
-    if len(normalized.split()) <= 2:
-        issues.append("💡 Please tell me more so I can help you better.")
+    # Skip short input feedback - main response handles this
 
     return issues
 
@@ -612,8 +610,7 @@ def get_grammar_issue_objects(text: str) -> List[dict]:
     if mm:
         add("Use 'too' (two o's) for degree.", "too", "I'm too tired.", match_text=mm.group(0))
 
-    if len(normalized.split()) <= 2:
-        add("Please tell me more so I can help you better.", "", "", match_text=normalized)
+    # Skip feedback for very short input - main message handles this
 
     return objs
 
